@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="fr"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="manifest" href="manifest.webmanifest"><meta name="theme-color" content="#0d0a14"><title>Sentinelles Survivors</title>
+<style>
+:root{--bg:#0d0a14;--ink:#e8e0cc;--gold:#c9a24b;--red:#b3202a;--steel:#7fa2c8;color-scheme:dark;box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,'Times New Roman',serif;overflow:hidden;touch-action:none;user-select:none;-webkit-user-select:none}
+canvas{display:block;width:100%;height:100%}
+#hud{position:fixed;top:0;left:0;right:0;padding:calc(env(safe-area-inset-top,0px) + 10px) 14px 0;pointer-events:none;font-size:15px}
+.bar{height:10px;background:#1c1626;border:1px solid #3a3050;margin-bottom:4px}
+.bar i{display:block;height:100%;width:100%}
+#hp i{background:var(--red)}#xp i{background:var(--steel);width:0}
+#info{display:flex;justify-content:space-between;color:var(--gold)}
+#ov{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center;gap:12px;padding:24px calc(24px + env(safe-area-inset-right,0px)) calc(24px + env(safe-area-inset-bottom,0px)) 24px;background:rgba(13,10,20,.92);text-align:center}
+#ov h1{margin:0;font-size:30px;color:var(--gold);letter-spacing:.02em}
+#ov p{margin:0;max-width:320px;line-height:1.4}
+button{font:inherit;color:var(--ink);background:#1c1626;border:1px solid var(--gold);padding:12px 16px;width:min(320px,100%);cursor:pointer;text-align:left;font-size:16px}
+button:active{background:#2c2240}
+button small{display:block;color:#b8aa8a;margin-top:2px}
+button.go{text-align:center;background:var(--red);border-color:var(--red);font-weight:bold}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="hud"><div class="bar" id="hp"><i></i></div><div class="bar" id="xp"><i></i></div><div id="info"><span id="lv"></span><span id="tm"></span><span id="kl"></span></div></div>
+<div id="ov"><h1>Sentinelles Survivors</h1><p>Glissez le doigt pour vous déplacer. Votre arme tire automatiquement. Survivez à la horde et améliorez votre armure.</p><button class="go" id="start">Lancer le combat</button></div>
+<script>
+const cv=document.getElementById('c'),x=cv.getContext('2d'),ov=document.getElementById('ov');
+let W,H,D;function rs(){D=window.devicePixelRatio||1;W=innerWidth;H=innerHeight;cv.width=W*D;cv.height=H*D;x.setTransform(D,0,0,D,0,0)}
+addEventListener('resize',rs);rs();
+const $=id=>document.getElementById(id);
+const UP=[
+{n:'Cadence de tir',d:'+20 % de vitesse de tir',f:p=>p.rate*=.8},
+{n:'Munitions lourdes',d:'+1 dégât par tir',f:p=>p.dmg++},
+{n:'Tir en rafale',d:'+1 projectile',f:p=>p.multi++},
+{n:'Lames orbitales',d:'+1 lame autour de vous',f:p=>p.orb++},
+{n:'Propulseurs',d:'+12 % de vitesse',f:p=>p.sp*=1.12},
+{n:'Armure renforcée',d:'+25 PV et soin complet',f:p=>{p.max+=25;p.hp=p.max}},
+{n:'Aimant à énergie',d:'+50 % de portée de ramassage',f:p=>p.mag*=1.5}];
+let P,E,B,Gm,t,kills,spawn,paused,over,cd,nb,AC,run=false;
+function snd(f,d){try{AC=AC||new(window.AudioContext||webkitAudioContext)();const o=AC.createOscillator(),g=AC.createGain();o.type='square';o.frequency.value=f;g.gain.value=.03;g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+d);o.connect(g);g.connect(AC.destination);o.start();o.stop(AC.currentTime+d)}catch(e){}}
+function vib(n){try{navigator.vibrate&&navigator.vibrate(n)}catch(e){}}
+function bst(){try{return +localStorage.sentBest||0}catch(e){return 0}}
+function reset(){P={x:0,y:0,hp:100,max:100,sp:140,rate:.6,dmg:1,multi:1,orb:0,mag:1,lvl:1,xp:0,next:6,inv:0,ang:0};E=[];B=[];Gm=[];t=0;kills=0;spawn=0;cd=0;nb=90;paused=false;over=false;run=true}
+const keys={};addEventListener('keydown',e=>keys[e.key.toLowerCase()]=1);addEventListener('keyup',e=>keys[e.key.toLowerCase()]=0);
+let js=null;
+cv.addEventListener('pointerdown',e=>{js={id:e.pointerId,ox:e.clientX,oy:e.clientY,dx:0,dy:0};cv.setPointerCapture(e.pointerId)});
+cv.addEventListener('pointermove',e=>{if(js&&js.id==e.pointerId){let dx=e.clientX-js.ox,dy=e.clientY-js.oy,l=Math.hypot(dx,dy),m=50;if(l>m){js.ox+=dx/l*(l-m);js.oy+=dy/l*(l-m);dx=dx/l*m;dy=dy/l*m}js.dx=dx/m;js.dy=dy/m}});
+const up=e=>{if(js&&js.id==e.pointerId)js=null};cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+function mk(){const a=Math.random()*6.283,d=Math.max(W,H)/2+40,r=Math.random();let o;
+if(t>60&&r<.12)o={hp:18+t/8,s:45,r:18,dmg:15,xp:5,c:'#7a1f2b'};
+else if(t>25&&r<.35)o={hp:2,s:105,r:8,dmg:6,xp:1,c:'#c9a24b'};
+else o={hp:3+(t/40|0),s:62,r:10,dmg:8,xp:1,c:'#5c8a4a'};
+o.x=P.x+Math.cos(a)*d;o.y=P.y+Math.sin(a)*d;o.ob=0;E.push(o)}
+function lvlUp(){paused=true;snd(660,.25);const pool=[...UP].sort(()=>Math.random()-.5).slice(0,3);
+ov.innerHTML='<h1>Niveau '+P.lvl+'</h1><p>Choisissez une amélioration</p>';
+pool.forEach(u=>{const b=document.createElement('button');b.innerHTML=u.n+'<small>'+u.d+'</small>';b.onclick=()=>{u.f(P);ov.style.display='none';paused=false};ov.appendChild(b)});
+ov.style.display='flex'}
+function end(){over=true;vib(200);try{if((t|0)>bst())localStorage.sentBest=t|0}catch(e){}ov.innerHTML='<h1>Armure détruite</h1><p>Survécu '+fmt(t)+' — '+kills+' ennemis abattus — niveau '+P.lvl+'</p><p>Record : '+fmt(bst())+'</p>';const b=document.createElement('button');b.className='go';b.textContent='Rejouer';b.onclick=()=>{reset();ov.style.display='none'};ov.appendChild(b);ov.style.display='flex'}
+function fmt(s){s|=0;return (s/60|0)+':'+String(s%60).padStart(2,'0')}
+function update(dt){
+let mx=(keys.d||keys.arrowright?1:0)-(keys.q||keys.a||keys.arrowleft?1:0),my=(keys.s||keys.arrowdown?1:0)-(keys.z||keys.w||keys.arrowup?1:0);
+if(js){mx=js.dx;my=js.dy}
+const l=Math.hypot(mx,my);if(l>1){mx/=l;my/=l}
+P.x+=mx*P.sp*dt;P.y+=my*P.sp*dt;t+=dt;P.inv-=dt;
+if(t>=nb){nb+=90;const a=Math.random()*6.283;E.push({hp:120+t,s:40,r:32,dmg:25,xp:25,c:'#5b2a86',ob:0,x:P.x+Math.cos(a)*400,y:P.y+Math.sin(a)*400})}
+spawn-=dt;if(spawn<=0&&E.length<260){const n=1+(t/45|0);for(let i=0;i<n;i++)mk();spawn=Math.max(.15,.8-t/150)}
+let tg=null,bd=1e9;
+for(const e of E){const dx=P.x-e.x,dy=P.y-e.y,d=Math.hypot(dx,dy)||1;e.x+=dx/d*e.s*dt;e.y+=dy/d*e.s*dt;e.ob-=dt;
+if(d<bd){bd=d;tg=e}
+if(d<e.r+11&&P.inv<=0){P.hp-=e.dmg;P.inv=.5;snd(90,.2);vib(40);if(P.hp<=0){end();return}}}
+cd-=dt;
+if(tg&&cd<=0&&bd<420){cd=P.rate;snd(320,.05);const a=Math.atan2(tg.y-P.y,tg.x-P.x);P.ang=a;
+for(let i=0;i<P.multi;i++){const q=a+(i-(P.multi-1)/2)*.14;B.push({x:P.x,y:P.y,vx:Math.cos(q)*520,vy:Math.sin(q)*520,l:1})}}
+for(const b of B){b.x+=b.vx*dt;b.y+=b.vy*dt;b.l-=dt;
+for(const e of E){if(e.hp>0&&Math.hypot(e.x-b.x,e.y-b.y)<e.r+4){e.hp-=P.dmg;b.l=0;break}}}
+B=B.filter(b=>b.l>0);
+for(let i=0;i<P.orb;i++){const a=t*3+i*6.283/P.orb,bx=P.x+Math.cos(a)*58,by=P.y+Math.sin(a)*58;
+for(const e of E)if(e.ob<=0&&Math.hypot(e.x-bx,e.y-by)<e.r+8){e.hp-=P.dmg;e.ob=.35}}
+E=E.filter(e=>{if(e.hp>0)return true;kills++;Gm.push({x:e.x,y:e.y,v:e.xp});return false});
+Gm=Gm.filter(g=>{const dx=P.x-g.x,dy=P.y-g.y,d=Math.hypot(dx,dy);
+if(d<70*P.mag){g.x+=dx/d*260*dt;g.y+=dy/d*260*dt}
+if(d<14){P.xp+=g.v;while(P.xp>=P.next){P.xp-=P.next;P.lvl++;P.next=5+P.lvl*4;P.pend=(P.pend||0)+1}return false}return true});
+if(P.pend&&!paused){P.pend--;lvlUp()}}
+function draw(){
+x.fillStyle='#0d0a14';x.fillRect(0,0,W,H);
+const cx=P.x-W/2,cy=P.y-H/2;
+x.strokeStyle='#1a1424';x.lineWidth=1;x.beginPath();
+for(let gx=-(cx%64);gx<W;gx+=64){x.moveTo(gx,0);x.lineTo(gx,H)}
+for(let gy=-(cy%64);gy<H;gy+=64){x.moveTo(0,gy);x.lineTo(W,gy)}x.stroke();
+x.save();x.translate(-cx,-cy);
+x.fillStyle='#6fd0e8';for(const g of Gm){x.beginPath();x.moveTo(g.x,g.y-5);x.lineTo(g.x+4,g.y);x.lineTo(g.x,g.y+5);x.lineTo(g.x-4,g.y);x.fill()}
+for(const e of E){x.fillStyle=e.c;x.beginPath();x.arc(e.x,e.y,e.r,0,6.283);x.fill();x.fillStyle='#e8e0cc';x.fillRect(e.x-e.r/2.5,e.y-e.r/4,e.r/4,e.r/4);x.fillRect(e.x+e.r/6,e.y-e.r/4,e.r/4,e.r/4)}
+x.fillStyle='#f2d98a';for(const b of B){x.beginPath();x.arc(b.x,b.y,3.5,0,6.283);x.fill()}
+x.fillStyle='#e8e0cc';for(let i=0;i<P.orb;i++){const a=t*3+i*6.283/P.orb;x.save();x.translate(P.x+Math.cos(a)*58,P.y+Math.sin(a)*58);x.rotate(a*2);x.fillRect(-9,-2.5,18,5);x.restore()}
+x.globalAlpha=P.inv>0&&((t*20|0)%2)?.4:1;
+x.fillStyle='#2c4a7a';x.beginPath();x.arc(P.x,P.y,13,0,6.283);x.fill();
+x.strokeStyle='#c9a24b';x.lineWidth=3;x.stroke();
+x.fillStyle='#b3202a';x.save();x.translate(P.x,P.y);x.rotate(P.ang);x.fillRect(3,-3,9,6);x.restore();x.globalAlpha=1;
+x.restore();
+if(js){x.strokeStyle='rgba(201,162,75,.5)';x.lineWidth=2;x.beginPath();x.arc(js.ox,js.oy,50,0,6.283);x.stroke();x.fillStyle='rgba(201,162,75,.5)';x.beginPath();x.arc(js.ox+js.dx*50,js.oy+js.dy*50,18,0,6.283);x.fill()}
+$('hp').firstChild.style.width=Math.max(0,P.hp/P.max*100)+'%';
+$('xp').firstChild.style.width=P.xp/P.next*100+'%';
+$('lv').textContent='Niv. '+P.lvl;$('tm').textContent=fmt(t);$('kl').textContent=kills+' ennemis'}
+let last=0;function loop(ts){const dt=Math.min(.05,(ts-last)/1000||0);last=ts;if(run){if(!paused&&!over)update(dt);draw()}requestAnimationFrame(loop)}
+document.addEventListener('contextmenu',e=>e.preventDefault());
+$('start').onclick=()=>{snd(1,.01);reset();ov.style.display='none'};
+reset();run=false;requestAnimationFrame(loop);
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script></body></html>
